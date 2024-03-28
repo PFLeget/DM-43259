@@ -1,6 +1,6 @@
 from tqdm import tqdm
 import numpy as np
-from .gaussian_processes import (
+from gaussian_processes import (
     GaussianProcessTreegp,
     GaussianProcessHODLRSolver,
     GaussianProcessGPyTorch,
@@ -8,7 +8,22 @@ from .gaussian_processes import (
 from lsst.meas.algorithms import CloughTocher2DInterpolatorUtils as ctUtils
 from lsst.afw.geom import SpanSet
 
+def timer(f):
+    import functools
 
+    @functools.wraps(f)
+    def f2(*args, **kwargs):
+        import time
+        import inspect
+
+        t0 = time.time()
+        result = f(*args, **kwargs)
+        t1 = time.time()
+        fname = repr(f).split()[1]
+        print("time for %s = %.4f" % (fname, t1 - t0))
+        return result
+
+    return f2
 
 class InterpolateOverDefectGaussianProcess():
     """
@@ -92,15 +107,32 @@ class InterpolateOverDefectGaussianProcess():
         mask = self.maskedImage.getMask()
         badPixelMask = mask.getPlaneBitMask(self.defects)
         badMaskSpanSet = SpanSet.fromMask(mask, badPixelMask).split()
+
+        bbox = self.maskedImage.getBBox()
+        glob_xmin, glob_xmax = bbox.minX, bbox.maxX
+        glob_ymin, glob_ymax = bbox.minY, bbox.maxY
+
         for i in tqdm(range(len(badMaskSpanSet))):
             spanset = badMaskSpanSet[i]
             bbox = spanset.getBBox()
+            # Dilate the bbox to make sure we have enough good pixels around the defect
+            # For now, we dilate by 5 times the correlation length
+            # For GP with isotropic kernel, points at 5 correlation lengths away have negligible
+            # effect on the prediction.
             bbox = bbox.dilatedBy(self.correlation_length * 5)
-            xmin, xmax = bbox.minX, bbox.maxX
-            ymin, ymax = bbox.minY, bbox.maxY
-            sub_masked_image = self.maskedImage[xmin:xmax, ymin:ymax]
-            sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image)
-            self.maskedImage[xmin:xmax, ymin:ymax] = sub_masked_image
+            xmin, xmax = max([glob_xmin, bbox.minX]), min(glob_xmax , bbox.maxX)
+            ymin, ymax = max([glob_ymin, bbox.minY]), min(glob_ymax , bbox.maxY)
+            problem_size = (xmax - xmin) * (ymax - ymin)
+            if problem_size > 10000:
+                # TO DO: need to implement a faster way to interpolate over large areas
+                print("Problem size is too large to interpolate over. Skipping.")
+                print("Problem size: ", problem_size)
+                print("xmin, xmax, ymin, ymax: ", xmin, xmax, ymin, ymax)
+                print("bbox: ", bbox)
+            else:
+                sub_masked_image = self.maskedImage[xmin:xmax, ymin:ymax]
+                sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image)
+                self.maskedImage[xmin:xmax, ymin:ymax] = sub_masked_image
 
 
     def _interpolate_over_defects_block(self):
@@ -114,9 +146,10 @@ class InterpolateOverDefectGaussianProcess():
                 sub_nx = min(self.block_size, nx - x)
                 sub_ny = min(self.block_size, ny - y)
                 sub_masked_image = self.maskedImage[x:x+sub_nx, y:y+sub_ny]
-                sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image, treegp=self.use_treegp)
+                sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image)
                 self.maskedImage[x:x+sub_nx, y:y+sub_ny] = sub_masked_image
 
+    @timer
     def interpolate_over_defects(self):
         """
         Interpolates over defects using the specified method.

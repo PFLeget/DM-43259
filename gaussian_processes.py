@@ -4,6 +4,8 @@ import george
 from george import kernels
 import treegp
 
+__all__ = ["GaussianProcessTreegp", "GaussianProcessHODLRSolver", "GaussianProcessGPyTorch"]
+
 
 # Vanilla Gaussian Process regression using treegp package
 # There is no fancy O(N*log(N)) solver here, just the basic GP regression (Cholesky).
