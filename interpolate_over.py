@@ -109,7 +109,7 @@ class InterpolateOverDefectGaussianProcess():
         Args:
             maskedImage (MaskedImage): The masked image containing defects.
             defects (list, optional): List of defect names to interpolate over. Defaults to ["SAT"].
-            fwhm (float, optional): Full width at half maximum of the Gaussian kernel. Defaults to 5.
+            fwhm (float, optional): FWHM from PSF and used as prior for correlation length. Defaults to 5.
             block_size (int, optional): Size of the block for block interpolation method. Defaults to 100.
             solver (str, optional): Solver to use for Gaussian Process interpolation. Options are "treegp", "george", and "gpytorch". Defaults to "treegp".
             method (str, optional): Interpolation method to use. Options are "block" and "spanset". Defaults to "block".
@@ -122,6 +122,12 @@ class InterpolateOverDefectGaussianProcess():
                 "Only treegp, george, and gpytorch are supported for solver. Current value: %s"
                 % (self.optimizer)
             )
+        if solver == "treegp":
+             self.solver = GaussianProcessTreegp
+         elif solver == "george":
+             self.solver = GaussianProcessHODLRSolver
+         elif solver == "gpytorch":
+             self.solver = GaussianProcessGPyTorch
 
         if method not in ["block", "spanset"]:
             raise ValueError(
