@@ -215,6 +215,14 @@ class GaussianProcessGPyTorch():
             'mean_module.constant': torch.tensor(mean, dtype=torch.float32),
         }
 
+        if torch.cuda.is_available():
+            self.cuda = True
+        else:
+            self.cuda = False
+
+        if self.cuda:
+            self.hypers = {k: v.cuda() for k, v in self.hypers.items()}
+
     def fit(self, x_good, y_good):
         """
         Fits the Gaussian Process model to the given training data.
@@ -226,8 +234,14 @@ class GaussianProcessGPyTorch():
         x = torch.tensor(x_good, dtype=torch.float32)
         y = torch.tensor(y_good, dtype=torch.float32)
 
+        if self.cuda:
+            x, y, = x.cuda(), y.cuda()
+
         self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
         self.model = GPRegressionModelEXACT(x, y, self.likelihood)
+        if self.cuda:
+            model = model.cuda()
+            likelihood = likelihood.cuda()
         self.model.initialize(**self.hypers)
         self.model.eval()
         self.likelihood.eval()
