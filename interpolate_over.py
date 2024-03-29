@@ -124,30 +124,48 @@ class InterpolateOverDefectGaussianProcess():
             ymin, ymax = max([glob_ymin, bbox.minY]), min(glob_ymax , bbox.maxY)
             problem_size = (xmax - xmin) * (ymax - ymin)
             if problem_size > 10000:
-                # TO DO: need to implement a faster way to interpolate over large areas
+                # TO DO: need to implement a better way to interpolate over large areas
+                # TO DO: One suggested idea might be to bin the area and average and interpolate using
+                # TO DO: the average values.
                 print("Problem size is too large to interpolate over. Skipping.")
                 print("Problem size: ", problem_size)
                 print("xmin, xmax, ymin, ymax: ", xmin, xmax, ymin, ymax)
                 print("bbox: ", bbox)
+                print("Use interpolate_over_defects_block instead for this spanset.")
+                print("block_size: ", self.block_size)
+                sub_masked_image = self.maskedImage[xmin:xmax, ymin:ymax]
+                sub_masked_image = self._interpolate_over_defects_block(maskedImage=sub_masked_image)
+                self.maskedImage[xmin:xmax, ymin:ymax] = sub_masked_image
             else:
                 sub_masked_image = self.maskedImage[xmin:xmax, ymin:ymax]
                 sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image)
                 self.maskedImage[xmin:xmax, ymin:ymax] = sub_masked_image
 
 
-    def _interpolate_over_defects_block(self):
+    def _interpolate_over_defects_block(self, maskedImage=None):
         """
         Interpolates over defects using the block method.
+
+        Args:
+            maskedImage (ndarray, optional): The masked image to interpolate over. If not provided, the method will use the
+                `maskedImage` attribute of the class.
+
+        Returns:
+            ndarray: The interpolated masked image.
         """
-        nx = self.maskedImage.getDimensions()[0]
-        ny = self.maskedImage.getDimensions()[1]
+        if maskedImage is None:
+            maskedImage = self.maskedImage
+        nx = maskedImage.getDimensions()[0]
+        ny = maskedImage.getDimensions()[1]
         for x in tqdm(range(0, nx, self.block_size)):
             for y in range(0, ny, self.block_size):
                 sub_nx = min(self.block_size, nx - x)
                 sub_ny = min(self.block_size, ny - y)
-                sub_masked_image = self.maskedImage[x:x+sub_nx, y:y+sub_ny]
+                sub_masked_image = maskedImage[x:x+sub_nx, y:y+sub_ny]
                 sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image)
-                self.maskedImage[x:x+sub_nx, y:y+sub_ny] = sub_masked_image
+                maskedImage[x:x+sub_nx, y:y+sub_ny] = sub_masked_image
+
+        return maskedImage
 
     @timer
     def interpolate_over_defects(self):
@@ -156,7 +174,7 @@ class InterpolateOverDefectGaussianProcess():
         """
 
         if self.method == "block":
-            self._interpolate_over_defects_block()
+            self.maskedImage = self._interpolate_over_defects_block()
         elif self.method == "spanset":
             self._interpolate_over_defects_spanset()
 
