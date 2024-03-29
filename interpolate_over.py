@@ -7,6 +7,7 @@ from gaussian_processes import (
 )
 from lsst.meas.algorithms import CloughTocher2DInterpolatorUtils as ctUtils
 from lsst.afw.geom import SpanSet
+from scipy.stats import binned_statistic_2d
 
 def timer(f):
     import functools
@@ -24,6 +25,45 @@ def timer(f):
         return result
 
     return f2
+
+
+def meanify(params, coords, bin_spacing=10, stat_used='mean', x_min=None, x_max=None, y_min=None, y_max=None):
+    """
+    Compute the mean function.
+    """
+    if x_min is None:
+        x_min = np.min(coords[:,0])
+    if x_max is None:
+        x_max = np.max(coords[:,0])
+    if y_min is None:
+        y_min = np.min(coords[:,1])
+    if y_max is None:
+        y_max = np.max(coords[:,1])
+
+    nbin_x = int((x_max - x_min) / bin_spacing)
+    nbin_y = int((y_max - y_min) / bin_spacing)
+    binning = [np.linspace(x_min, x_max, nbin_x), np.linspace(y_min, y_max, nbin_y)]
+    nbinning = (len(binning[0]) - 1) * (len(binning[1]) - 1)
+    Filter = np.array([True]*nbinning)
+
+    average, u0, v0, _ = binned_statistic_2d(coords[:,0], coords[:,1], params, bins=binning, statistic=stat_used)
+
+    # get center of each bin
+    u0 = u0[:-1] + (u0[1] - u0[0])/2.
+    v0 = v0[:-1] + (v0[1] - v0[0])/2.
+    u0, v0 = np.meshgrid(u0, v0)
+
+    average = average.T
+    average = average.reshape(-1)
+    Filter &= np.isfinite(average).reshape(-1)
+
+    coords0 = np.array([u0.reshape(-1), v0.reshape(-1)]).T
+    coords0 = coords0[Filter]
+    params0 = average[Filter]
+
+    return coords0, params0
+
+
 
 class InterpolateOverDefectGaussianProcess():
     """
@@ -58,7 +98,9 @@ class InterpolateOverDefectGaussianProcess():
     def __init__(self, maskedImage, defects=["SAT"], fwhm=5,
                  block_size=100,
                  solver="treegp",
-                 method="block"):
+                 method="block",
+                 use_binning=False,
+                 bin_spacing=10,):
         """
         Initializes the InterpolateOverDefectGaussianProcess object.
 
@@ -95,6 +137,9 @@ class InterpolateOverDefectGaussianProcess():
         self.method = method
         self.block_size = block_size
 
+        self.use_binning = use_binning
+        self.bin_spacing = bin_spacing
+
         self.maskedImage = maskedImage
         self.defects = defects
         self.correlation_length = fwhm
@@ -123,7 +168,7 @@ class InterpolateOverDefectGaussianProcess():
             xmin, xmax = max([glob_xmin, bbox.minX]), min(glob_xmax , bbox.maxX)
             ymin, ymax = max([glob_ymin, bbox.minY]), min(glob_ymax , bbox.maxY)
             problem_size = (xmax - xmin) * (ymax - ymin)
-            if problem_size > 10000:
+            if problem_size > 10000 and not self.use_binning:
                 # TO DO: need to implement a better way to interpolate over large areas
                 # TO DO: One suggested idea might be to bin the area and average and interpolate using
                 # TO DO: the average values.
@@ -132,7 +177,6 @@ class InterpolateOverDefectGaussianProcess():
                 print("xmin, xmax, ymin, ymax: ", xmin, xmax, ymin, ymax)
                 print("bbox: ", bbox)
                 print("Use interpolate_over_defects_block instead for this spanset.")
-                print("block_size: ", self.block_size)
                 sub_masked_image = self.maskedImage[xmin:xmax, ymin:ymax]
                 sub_masked_image = self._interpolate_over_defects_block(maskedImage=sub_masked_image)
                 self.maskedImage[xmin:xmax, ymin:ymax] = sub_masked_image
@@ -189,6 +233,11 @@ class InterpolateOverDefectGaussianProcess():
         elif self.method == "spanset":
             self._interpolate_over_defects_spanset()
 
+    def _good_pixel_binning(self, good_pixel):
+        coord, params = meanify(good_pixel[:,2:].T, good_pixel[:,:2],
+                                bin_spacing=self.bin_spacing, stat_used='mean')
+        return np.array([coord[:,0], coord[:,1], params]).T
+
     def interpolate_sub_masked_image(self, sub_masked_image):
         """
         Interpolates over defects in a sub-masked image.
@@ -208,6 +257,9 @@ class InterpolateOverDefectGaussianProcess():
         # Do GP interpolation if bad pixel found.
         else:
             # gp interpolation
+            if self.use_binning:
+                good_pixel = self._good_pixel_binning(good_pixel)
+
             mean = np.mean(good_pixel[:,2:])
             white_noise = np.sqrt(np.mean(sub_masked_image.getVariance().array))
             kernel_amplitude = np.std(good_pixel[:,2:])
