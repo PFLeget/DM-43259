@@ -155,8 +155,16 @@ class InterpolateOverDefectGaussianProcess():
         """
         if maskedImage is None:
             maskedImage = self.maskedImage
+            bbox = None
+        else:
+            bbox = maskedImage.getBBox()
+            ox = bbox.beginX
+            oy = bbox.beginY
+            maskedImage.setXY0(0,0)
+
         nx = maskedImage.getDimensions()[0]
         ny = maskedImage.getDimensions()[1]
+
         for x in tqdm(range(0, nx, self.block_size)):
             for y in range(0, ny, self.block_size):
                 sub_nx = min(self.block_size, nx - x)
@@ -164,6 +172,9 @@ class InterpolateOverDefectGaussianProcess():
                 sub_masked_image = maskedImage[x:x+sub_nx, y:y+sub_ny]
                 sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image)
                 maskedImage[x:x+sub_nx, y:y+sub_ny] = sub_masked_image
+
+        if bbox is not None:
+            maskedImage.setXY0(ox, oy)
 
         return maskedImage
 
