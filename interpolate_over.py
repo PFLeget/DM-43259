@@ -124,9 +124,9 @@ class InterpolateOverDefectGaussianProcess():
             )
         if solver == "treegp":
              self.solver = GaussianProcessTreegp
-         elif solver == "george":
+        elif solver == "george":
              self.solver = GaussianProcessHODLRSolver
-         elif solver == "gpytorch":
+        elif solver == "gpytorch":
              self.solver = GaussianProcessGPyTorch
 
         if method not in ["block", "spanset"]:
