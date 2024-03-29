@@ -8,6 +8,7 @@ from gaussian_processes import (
 from lsst.meas.algorithms import CloughTocher2DInterpolatorUtils as ctUtils
 from lsst.afw.geom import SpanSet
 from scipy.stats import binned_statistic_2d
+import copy
 
 def timer(f):
     import functools
@@ -29,7 +30,23 @@ def timer(f):
 
 def meanify(params, coords, bin_spacing=10, stat_used='mean', x_min=None, x_max=None, y_min=None, y_max=None):
     """
-    Compute the mean function.
+    Compute the mean of the given parameters over a grid of coordinates.
+
+    Parameters:
+    - params (numpy.ndarray): Array of parameters to be averaged.
+    - coords (numpy.ndarray): Array of coordinates corresponding to the parameters.
+    - bin_spacing (float, optional): Spacing between bins in the units of the coordinates. Default is 10.
+    - stat_used (str, optional): Statistic to be computed. Default is 'mean'.
+    - x_min (float, optional): Minimum x-coordinate value. If not provided, the minimum value from the coordinates array is used.
+    - x_max (float, optional): Maximum x-coordinate value. If not provided, the maximum value from the coordinates array is used.
+    - y_min (float, optional): Minimum y-coordinate value. If not provided, the minimum value from the coordinates array is used.
+    - y_max (float, optional): Maximum y-coordinate value. If not provided, the maximum value from the coordinates array is used.
+
+    Returns:
+    - coords0 (numpy.ndarray): Array of coordinates corresponding to the averaged parameters.
+    - params0 (numpy.ndarray): Array of averaged parameters.
+
+    Note: The bin spacing is in the units of the coordinates.
     """
     if x_min is None:
         x_min = np.min(coords[:,0])
@@ -67,66 +84,44 @@ def meanify(params, coords, bin_spacing=10, stat_used='mean', x_min=None, x_max=
 
 class InterpolateOverDefectGaussianProcess():
     """
-    A class that performs interpolation over defects in a masked image using Gaussian Process.
+    Class for interpolating over defects in a masked image using Gaussian Processes.
 
     Args:
         maskedImage (MaskedImage): The masked image containing defects.
-        defects (list, optional): List of defect types to interpolate over. Defaults to ["SAT"].
-        fwhm (float, optional): Full Width at Half Maximum (FWHM) of the correlation length. Defaults to 5.
-        block_size (int, optional): Size of the blocks used for block-wise interpolation. Defaults to 100.
-        solver (str, optional): Solver to use for Gaussian Process interpolation. Supported values are "treegp", "george", and "gpytorch". Defaults to "treegp".
-        method (str, optional): Interpolation method to use. Supported values are "block" and "spanset". Defaults to "block".
-
-    Raises:
-        ValueError: If an unsupported solver or method is provided.
-
-    Attributes:
-        method (str): Interpolation method used.
-        block_size (int): Size of the blocks used for block-wise interpolation.
-        maskedImage (MaskedImage): The masked image containing defects.
-        defects (list): List of defect types to interpolate over.
-        correlation_length (float): Full Width at Half Maximum (FWHM) of the correlation length.
-        solver (GaussianProcessSolver): The solver used for Gaussian Process interpolation.
-
-    Methods:
-        _interpolate_over_defects_spanset: Interpolates over defects using the spanset method.
-        _interpolate_over_defects_block: Interpolates over defects using the block method.
-        interpolate_over_defects: Interpolates over defects using the specified method.
-        interpolate_sub_masked_image: Interpolates over defects in a sub-masked image.
-
+        defects (list, optional): List of defect names to interpolate over. Defaults to ["SAT"].
+        fwhm (float, optional): FWHM from PSF and used as prior for correlation length. Defaults to 5.
+        block_size (int, optional): Size of the block for block interpolation method. Defaults to 100.
+        solver (str, optional): Solver to use for Gaussian Process interpolation. Options are "treegp", "george", and "gpytorch". Defaults to "treegp".
+        method (str, optional): Interpolation method to use. Options are "block" and "spanset". Defaults to "block".
+        use_binning (bool, optional): Whether to use binning for large areas. Defaults to False.
+        bin_spacing (float, optional): Spacing for binning. Defaults to 10.
     """
+
     def __init__(self, maskedImage, defects=["SAT"], fwhm=5,
                  block_size=100,
                  solver="treegp",
                  method="block",
                  use_binning=False,
-                 bin_spacing=10,):
+                 bin_spacing=10):
         """
-        Initializes the InterpolateOverDefectGaussianProcess object.
+        Initializes the InterpolateOverDefectGaussianProcess class.
 
         Args:
             maskedImage (MaskedImage): The masked image containing defects.
-            defects (list, optional): List of defect types to interpolate over. Defaults to ["SAT"].
-            fwhm (float, optional): FWHM from PSF use as prior for correlation lenght. Defaults to 5.
-            block_size (int, optional): Size of the blocks used for block-wise interpolation. Defaults to 100.
-            solver (str, optional): Solver to use for Gaussian Process interpolation. Supported values are "treegp", "george", and "gpytorch". Defaults to "treegp".
-            method (str, optional): Interpolation method to use. Supported values are "block" and "spanset". Defaults to "block".
-
-        Raises:
-            ValueError: If an unsupported solver or method is provided.
+            defects (list, optional): List of defect names to interpolate over. Defaults to ["SAT"].
+            fwhm (float, optional): Full width at half maximum of the Gaussian kernel. Defaults to 5.
+            block_size (int, optional): Size of the block for block interpolation method. Defaults to 100.
+            solver (str, optional): Solver to use for Gaussian Process interpolation. Options are "treegp", "george", and "gpytorch". Defaults to "treegp".
+            method (str, optional): Interpolation method to use. Options are "block" and "spanset". Defaults to "block".
+            use_binning (bool, optional): Whether to use binning for large areas. Defaults to False.
+            bin_spacing (float, optional): Spacing for binning. Defaults to 10.
         """
+
         if solver not in ["treegp", "george", "gpytorch"]:
             raise ValueError(
                 "Only treegp, george, and gpytorch are supported for solver. Current value: %s"
                 % (self.optimizer)
             )
-
-        if solver == "treegp":
-            self.solver = GaussianProcessTreegp
-        elif solver == "george":
-            self.solver = GaussianProcessHODLRSolver
-        elif solver == "gpytorch":
-            self.solver = GaussianProcessGPyTorch
 
         if method not in ["block", "spanset"]:
             raise ValueError(
@@ -234,6 +229,16 @@ class InterpolateOverDefectGaussianProcess():
             self._interpolate_over_defects_spanset()
 
     def _good_pixel_binning(self, good_pixel):
+        """
+        Performs binning of good pixel data.
+
+        Parameters:
+        - good_pixel (numpy.ndarray): An array containing the good pixel data.
+
+        Returns:
+        - numpy.ndarray: An array containing the binned data.
+
+        """
         coord, params = meanify(good_pixel[:,2:].T, good_pixel[:,:2],
                                 bin_spacing=self.bin_spacing, stat_used='mean')
         return np.array([coord[:,0], coord[:,1], params]).T
@@ -257,12 +262,11 @@ class InterpolateOverDefectGaussianProcess():
         # Do GP interpolation if bad pixel found.
         else:
             # gp interpolation
-            if self.use_binning:
-                good_pixel = self._good_pixel_binning(good_pixel)
-
             mean = np.mean(good_pixel[:,2:])
             white_noise = np.sqrt(np.mean(sub_masked_image.getVariance().array))
             kernel_amplitude = np.std(good_pixel[:,2:])
+            if self.use_binning:
+                good_pixel = self._good_pixel_binning(copy.deepcopy(good_pixel))
 
             gp = self.solver(std=np.sqrt(kernel_amplitude), correlation_length=self.correlation_length, white_noise=white_noise, mean=mean)
             gp.fit(good_pixel[:,:2], np.squeeze(good_pixel[:,2:]))
