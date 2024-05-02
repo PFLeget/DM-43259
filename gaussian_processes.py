@@ -4,12 +4,16 @@ import george
 from george import kernels
 import treegp
 
-__all__ = ["GaussianProcessTreegp", "GaussianProcessHODLRSolver", "GaussianProcessGPyTorch"]
+__all__ = [
+    "GaussianProcessTreegp",
+    "GaussianProcessHODLRSolver",
+    "GaussianProcessGPyTorch",
+]
 
 
 # Vanilla Gaussian Process regression using treegp package
 # There is no fancy O(N*log(N)) solver here, just the basic GP regression (Cholesky).
-class GaussianProcessTreegp():
+class GaussianProcessTreegp:
     """
     Gaussian Process regression using treegp package.
 
@@ -28,7 +32,7 @@ class GaussianProcessTreegp():
 
     """
 
-    def __init__(self, std=1., correlation_length=1., white_noise=0., mean=0.):
+    def __init__(self, std=1.0, correlation_length=1.0, white_noise=0.0, mean=0.0):
         """
         Initializes a new instance of the gp_treegp class.
 
@@ -42,7 +46,7 @@ class GaussianProcessTreegp():
         """
         self.std = std
         self.l = correlation_length
-        self.white_noise  = white_noise
+        self.white_noise = white_noise
         self.mean = mean
 
     def fit(self, x_good, y_good):
@@ -54,13 +58,13 @@ class GaussianProcessTreegp():
             y_good (array-like): The target values of the training data.
 
         """
-        KERNEL = '%.2f**2 * RBF(%f)'%((self.std, self.l))
+        KERNEL = "%.2f**2 * RBF(%f)" % ((self.std, self.l))
         self.gp = treegp.GPInterpolation(
-                kernel=KERNEL,
-                optimizer='none',
-                normalize=True,
-                p0=[3000.0, 0.0, 0.0],
-                white_noise=self.white_noise,
+            kernel=KERNEL,
+            optimizer="none",
+            normalize=True,
+            p0=[3000.0, 0.0, 0.0],
+            white_noise=self.white_noise,
         )
         self.gp.initialize(x_good, y_good)
         self.gp.solve()
@@ -79,8 +83,9 @@ class GaussianProcessTreegp():
         y_pred = self.gp.predict(x_bad)
         return y_pred
 
+
 # GP using HOLDR solver from george package
-class GaussianProcessHODLRSolver():
+class GaussianProcessHODLRSolver:
     """
     A class representing a Gaussian Process solver using the HODLR solver method.
 
@@ -96,7 +101,7 @@ class GaussianProcessHODLRSolver():
 
     """
 
-    def __init__(self, std=1., correlation_length=1., white_noise=0., mean=0.):
+    def __init__(self, std=1.0, correlation_length=1.0, white_noise=0.0, mean=0.0):
         """
         Initializes a GaussianProcessHODLRSolver object.
 
@@ -106,10 +111,10 @@ class GaussianProcessHODLRSolver():
         - white_noise (float): The white noise level of the Gaussian process.
         - mean (float): The mean value of the Gaussian process.
         """
-        
+
         self.variance = std**2
         self.correlation_length = correlation_length
-        self.white_noise  = white_noise
+        self.white_noise = white_noise
         self.mean = mean
 
     def fit(self, x_good, y_good, **kwargs):
@@ -122,10 +127,17 @@ class GaussianProcessHODLRSolver():
         - **kwargs: Additional keyword arguments to be passed to the GP solver.
 
         """
-        kernel = self.variance * kernels.ExpSquaredKernel(self.correlation_length, ndim=2)
-        self.gp = george.GP(kernel, mean=self.mean,
-                            fit_kernel=False,
-                            solver=george.HODLRSolver, seed=42, **kwargs)
+        kernel = self.variance * kernels.ExpSquaredKernel(
+            self.correlation_length, ndim=2
+        )
+        self.gp = george.GP(
+            kernel,
+            mean=self.mean,
+            fit_kernel=False,
+            solver=george.HODLRSolver,
+            seed=42,
+            **kwargs
+        )
         self.gp.compute(x_good, yerr=self.white_noise)
         self._y_good = y_good
 
@@ -140,8 +152,11 @@ class GaussianProcessHODLRSolver():
         - y_pred (array-like): The predicted values of the Gaussian process at the test points.
 
         """
-        y_pred = self.gp.predict(self._y_good, x_bad, return_var=False, return_cov=False)
+        y_pred = self.gp.predict(
+            self._y_good, x_bad, return_var=False, return_cov=False
+        )
         return y_pred
+
 
 # GP using gpytorch package
 # This class is a wrapper around the gpytorch.models.ExactGP class.
@@ -164,9 +179,7 @@ class GPRegressionModelEXACT(gpytorch.models.ExactGP):
         super(GPRegressionModelEXACT, self).__init__(x_good, y_good, likelihood)
 
         self.mean_module = gpytorch.means.ConstantMean()
-        self.covar_module = gpytorch.kernels.ScaleKernel(
-                gpytorch.kernels.RBFKernel()
-        )
+        self.covar_module = gpytorch.kernels.ScaleKernel(gpytorch.kernels.RBFKernel())
 
     def forward(self, x):
         """
@@ -182,7 +195,8 @@ class GPRegressionModelEXACT(gpytorch.models.ExactGP):
         covar_x = self.covar_module(x)
         return gpytorch.distributions.MultivariateNormal(mean_x, covar_x)
 
-class GaussianProcessGPyTorch():
+
+class GaussianProcessGPyTorch:
     """
     A class representing a Gaussian Process regression model using GPyTorch.
 
@@ -198,7 +212,7 @@ class GaussianProcessGPyTorch():
 
     """
 
-    def __init__(self, std=1., correlation_length=1., white_noise=1., mean=0.):
+    def __init__(self, std=1.0, correlation_length=1.0, white_noise=1.0, mean=0.0):
         """
         Initializes the GaussianProcessGPyTorch object.
 
@@ -209,10 +223,14 @@ class GaussianProcessGPyTorch():
         - mean (float): The mean of the output.
         """
         self.hypers = {
-            'likelihood.noise_covar.noise': torch.tensor(white_noise, dtype=torch.float32),
-            'covar_module.base_kernel.lengthscale': torch.tensor(correlation_length, dtype=torch.float32),
-            'covar_module.outputscale': torch.tensor(std, dtype=torch.float32),
-            'mean_module.constant': torch.tensor(mean, dtype=torch.float32),
+            "likelihood.noise_covar.noise": torch.tensor(
+                white_noise, dtype=torch.float32
+            ),
+            "covar_module.base_kernel.lengthscale": torch.tensor(
+                correlation_length, dtype=torch.float32
+            ),
+            "covar_module.outputscale": torch.tensor(std, dtype=torch.float32),
+            "mean_module.constant": torch.tensor(mean, dtype=torch.float32),
         }
 
         if torch.cuda.is_available():
@@ -235,7 +253,13 @@ class GaussianProcessGPyTorch():
         y = torch.tensor(y_good, dtype=torch.float32)
 
         if self.cuda:
-            x, y, = x.cuda(), y.cuda()
+            (
+                x,
+                y,
+            ) = (
+                x.cuda(),
+                y.cuda(),
+            )
 
         self.likelihood = gpytorch.likelihoods.GaussianLikelihood()
         self.model = GPRegressionModelEXACT(x, y, self.likelihood)
