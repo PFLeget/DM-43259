@@ -10,6 +10,7 @@ from lsst.afw.geom import SpanSet
 from scipy.stats import binned_statistic_2d
 import copy
 
+
 def timer(f):
     import functools
 
@@ -28,7 +29,16 @@ def timer(f):
     return f2
 
 
-def meanify(params, coords, bin_spacing=10, stat_used='mean', x_min=None, x_max=None, y_min=None, y_max=None):
+def meanify(
+    params,
+    coords,
+    bin_spacing=10,
+    stat_used="mean",
+    x_min=None,
+    x_max=None,
+    y_min=None,
+    y_max=None,
+):
     """
     Compute the mean of the given parameters over a grid of coordinates.
 
@@ -49,25 +59,27 @@ def meanify(params, coords, bin_spacing=10, stat_used='mean', x_min=None, x_max=
     Note: The bin spacing is in the units of the coordinates.
     """
     if x_min is None:
-        x_min = np.min(coords[:,0])
+        x_min = np.min(coords[:, 0])
     if x_max is None:
-        x_max = np.max(coords[:,0])
+        x_max = np.max(coords[:, 0])
     if y_min is None:
-        y_min = np.min(coords[:,1])
+        y_min = np.min(coords[:, 1])
     if y_max is None:
-        y_max = np.max(coords[:,1])
+        y_max = np.max(coords[:, 1])
 
     nbin_x = int((x_max - x_min) / bin_spacing)
     nbin_y = int((y_max - y_min) / bin_spacing)
     binning = [np.linspace(x_min, x_max, nbin_x), np.linspace(y_min, y_max, nbin_y)]
     nbinning = (len(binning[0]) - 1) * (len(binning[1]) - 1)
-    Filter = np.array([True]*nbinning)
+    Filter = np.array([True] * nbinning)
 
-    average, u0, v0, _ = binned_statistic_2d(coords[:,0], coords[:,1], params, bins=binning, statistic=stat_used)
+    average, u0, v0, _ = binned_statistic_2d(
+        coords[:, 0], coords[:, 1], params, bins=binning, statistic=stat_used
+    )
 
     # get center of each bin
-    u0 = u0[:-1] + (u0[1] - u0[0])/2.
-    v0 = v0[:-1] + (v0[1] - v0[0])/2.
+    u0 = u0[:-1] + (u0[1] - u0[0]) / 2.0
+    v0 = v0[:-1] + (v0[1] - v0[0]) / 2.0
     u0, v0 = np.meshgrid(u0, v0)
 
     average = average.T
@@ -81,8 +93,7 @@ def meanify(params, coords, bin_spacing=10, stat_used='mean', x_min=None, x_max=
     return coords0, params0
 
 
-
-class InterpolateOverDefectGaussianProcess():
+class InterpolateOverDefectGaussianProcess:
     """
     Class for interpolating over defects in a masked image using Gaussian Processes.
 
@@ -97,12 +108,17 @@ class InterpolateOverDefectGaussianProcess():
         bin_spacing (float, optional): Spacing for binning. Defaults to 10.
     """
 
-    def __init__(self, maskedImage, defects=["SAT"], fwhm=5,
-                 block_size=100,
-                 solver="treegp",
-                 method="block",
-                 use_binning=False,
-                 bin_spacing=10):
+    def __init__(
+        self,
+        maskedImage,
+        defects=["SAT"],
+        fwhm=5,
+        block_size=100,
+        solver="treegp",
+        method="block",
+        use_binning=False,
+        bin_spacing=10,
+    ):
         """
         Initializes the InterpolateOverDefectGaussianProcess class.
 
@@ -123,11 +139,11 @@ class InterpolateOverDefectGaussianProcess():
                 % (self.optimizer)
             )
         if solver == "treegp":
-             self.solver = GaussianProcessTreegp
+            self.solver = GaussianProcessTreegp
         elif solver == "george":
-             self.solver = GaussianProcessHODLRSolver
+            self.solver = GaussianProcessHODLRSolver
         elif solver == "gpytorch":
-             self.solver = GaussianProcessGPyTorch
+            self.solver = GaussianProcessGPyTorch
 
         if method not in ["block", "spanset"]:
             raise ValueError(
@@ -166,8 +182,8 @@ class InterpolateOverDefectGaussianProcess():
             # For GP with isotropic kernel, points at 5 correlation lengths away have negligible
             # effect on the prediction.
             bbox = bbox.dilatedBy(self.correlation_length * 5)
-            xmin, xmax = max([glob_xmin, bbox.minX]), min(glob_xmax , bbox.maxX)
-            ymin, ymax = max([glob_ymin, bbox.minY]), min(glob_ymax , bbox.maxY)
+            xmin, xmax = max([glob_xmin, bbox.minX]), min(glob_xmax, bbox.maxX)
+            ymin, ymax = max([glob_ymin, bbox.minY]), min(glob_ymax, bbox.maxY)
             problem_size = (xmax - xmin) * (ymax - ymin)
             if problem_size > 10000 and not self.use_binning:
                 # TO DO: need to implement a better way to interpolate over large areas
@@ -179,13 +195,14 @@ class InterpolateOverDefectGaussianProcess():
                 print("bbox: ", bbox)
                 print("Use interpolate_over_defects_block instead for this spanset.")
                 sub_masked_image = self.maskedImage[xmin:xmax, ymin:ymax]
-                sub_masked_image = self._interpolate_over_defects_block(maskedImage=sub_masked_image)
+                sub_masked_image = self._interpolate_over_defects_block(
+                    maskedImage=sub_masked_image
+                )
                 self.maskedImage[xmin:xmax, ymin:ymax] = sub_masked_image
             else:
                 sub_masked_image = self.maskedImage[xmin:xmax, ymin:ymax]
                 sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image)
                 self.maskedImage[xmin:xmax, ymin:ymax] = sub_masked_image
-
 
     def _interpolate_over_defects_block(self, maskedImage=None):
         """
@@ -205,7 +222,7 @@ class InterpolateOverDefectGaussianProcess():
             bbox = maskedImage.getBBox()
             ox = bbox.beginX
             oy = bbox.beginY
-            maskedImage.setXY0(0,0)
+            maskedImage.setXY0(0, 0)
 
         nx = maskedImage.getDimensions()[0]
         ny = maskedImage.getDimensions()[1]
@@ -214,9 +231,9 @@ class InterpolateOverDefectGaussianProcess():
             for y in range(0, ny, self.block_size):
                 sub_nx = min(self.block_size, nx - x)
                 sub_ny = min(self.block_size, ny - y)
-                sub_masked_image = maskedImage[x:x+sub_nx, y:y+sub_ny]
+                sub_masked_image = maskedImage[x : x + sub_nx, y : y + sub_ny]
                 sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image)
-                maskedImage[x:x+sub_nx, y:y+sub_ny] = sub_masked_image
+                maskedImage[x : x + sub_nx, y : y + sub_ny] = sub_masked_image
 
         if bbox is not None:
             maskedImage.setXY0(ox, oy)
@@ -245,9 +262,13 @@ class InterpolateOverDefectGaussianProcess():
         - numpy.ndarray: An array containing the binned data.
 
         """
-        coord, params = meanify(good_pixel[:,2:].T, good_pixel[:,:2],
-                                bin_spacing=self.bin_spacing, stat_used='mean')
-        return np.array([coord[:,0], coord[:,1], params]).T
+        coord, params = meanify(
+            good_pixel[:, 2:].T,
+            good_pixel[:, :2],
+            bin_spacing=self.bin_spacing,
+            stat_used="mean",
+        )
+        return np.array([coord[:, 0], coord[:, 1], params]).T
 
     def interpolate_sub_masked_image(self, sub_masked_image):
         """
@@ -261,24 +282,31 @@ class InterpolateOverDefectGaussianProcess():
         """
 
         cut = self.correlation_length * 5
-        bad_pixel, good_pixel = ctUtils.findGoodPixelsAroundBadPixels(sub_masked_image, self.defects, buffer=cut)
+        bad_pixel, good_pixel = ctUtils.findGoodPixelsAroundBadPixels(
+            sub_masked_image, self.defects, buffer=cut
+        )
         # Do nothing if bad pixel is None.
         if np.shape(bad_pixel)[0] == 0:
             return sub_masked_image
         # Do GP interpolation if bad pixel found.
         else:
             # gp interpolation
-            mean = np.mean(good_pixel[:,2:])
+            mean = np.mean(good_pixel[:, 2:])
             white_noise = np.sqrt(np.mean(sub_masked_image.getVariance().array))
-            kernel_amplitude = np.std(good_pixel[:,2:])
+            kernel_amplitude = np.std(good_pixel[:, 2:])
             if self.use_binning:
                 good_pixel = self._good_pixel_binning(copy.deepcopy(good_pixel))
 
-            gp = self.solver(std=np.sqrt(kernel_amplitude), correlation_length=self.correlation_length, white_noise=white_noise, mean=mean)
-            gp.fit(good_pixel[:,:2], np.squeeze(good_pixel[:,2:]))
-            gp_predict = gp.predict(bad_pixel[:,:2])
+            gp = self.solver(
+                std=np.sqrt(kernel_amplitude),
+                correlation_length=self.correlation_length,
+                white_noise=white_noise,
+                mean=mean,
+            )
+            gp.fit(good_pixel[:, :2], np.squeeze(good_pixel[:, 2:]))
+            gp_predict = gp.predict(bad_pixel[:, :2])
 
-            bad_pixel[:,2:] = gp_predict.reshape(np.shape(bad_pixel[:,2:]))
+            bad_pixel[:, 2:] = gp_predict.reshape(np.shape(bad_pixel[:, 2:]))
 
             # update_value
             ctUtils.updateImageFromArray(sub_masked_image.image, bad_pixel)
