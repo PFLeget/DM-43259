@@ -11,6 +11,7 @@ from lsst.afw.geom import SpanSet
 from scipy.stats import binned_statistic_2d
 import copy
 
+print('JE SUIS LA')
 
 def timer(f):
     import functools
@@ -216,6 +217,7 @@ class InterpolateOverDefectGaussianProcess:
                     condition = True
                     break
                 try:
+                    print('Je suis la v2')
                     sub_masked_image = self.interpolate_sub_masked_image(
                         sub_masked_image
                     )
@@ -308,10 +310,12 @@ class InterpolateOverDefectGaussianProcess:
         )
         # Do nothing if bad pixel is None.
         if np.shape(bad_pixel)[0] == 0:
+            print('pas de bad pixel')
             return sub_masked_image
         # Do GP interpolation if bad pixel found.
         else:
             # gp interpolation
+            print('bad pixel detected')
             mean = np.mean(good_pixel[:, 2:])
             sub_image_array = sub_masked_image.getVariance().array
             white_noise = np.sqrt(
@@ -319,6 +323,7 @@ class InterpolateOverDefectGaussianProcess:
             )
             kernel_amplitude = np.std(good_pixel[:, 2:])
             if self.use_binning:
+                print('Je bin')
                 good_pixel = self._good_pixel_binning(copy.deepcopy(good_pixel))
 
             gp = self.solver(
@@ -330,8 +335,9 @@ class InterpolateOverDefectGaussianProcess:
             if bad_pixel.size > 20000:
                 raise ValueError("Too many pixels | TO DO: need to implement something")
             gp.fit(good_pixel[:, :2], np.squeeze(good_pixel[:, 2:]))
+            print(len(bad_pixel[:, :2]), len(np.squeeze(good_pixel[:, 2:])))
             gp_predict = gp.predict(bad_pixel[:, :2])
-
+            # print(gp_predict.reshape(np.shape(bad_pixel[:, 2:])) - bad_pixel[:, 2:])
             bad_pixel[:, 2:] = gp_predict.reshape(np.shape(bad_pixel[:, 2:]))
 
             # update_value
