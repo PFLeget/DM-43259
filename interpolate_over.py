@@ -1,33 +1,12 @@
-from tqdm import tqdm
 import numpy as np
 from gaussian_processes import (
     GaussianProcessTreegp,
-    GaussianProcessHODLRSolver,
-    GaussianProcessGPyTorch,
 )
 from lsst.meas.algorithms import CloughTocher2DInterpolatorUtils as ctUtils
 from lsst.geom import Box2I, Point2I, Extent2I
 from lsst.afw.geom import SpanSet
 from scipy.stats import binned_statistic_2d
 import copy
-
-
-def timer(f):
-    import functools
-
-    @functools.wraps(f)
-    def f2(*args, **kwargs):
-        import time
-        import inspect
-
-        t0 = time.time()
-        result = f(*args, **kwargs)
-        t1 = time.time()
-        fname = repr(f).split()[1]
-        print("time for %s = %.4f" % (fname, t1 - t0))
-        return result
-
-    return f2
 
 
 def meanify(
@@ -115,7 +94,6 @@ class InterpolateOverDefectGaussianProcess:
         defects=["SAT"],
         fwhm=5,
         block_size=100,
-        solver="treegp",
         method="block",
         use_binning=False,
         bin_spacing=10,
@@ -133,19 +111,6 @@ class InterpolateOverDefectGaussianProcess:
             use_binning (bool, optional): Whether to use binning for large areas. Defaults to False.
             bin_spacing (float, optional): Spacing for binning. Defaults to 10.
         """
-
-        if solver not in ["treegp", "george", "gpytorch"]:
-            raise ValueError(
-                "Only treegp, george, and gpytorch are supported for solver. Current value: %s"
-                % (self.optimizer)
-            )
-        if solver == "treegp":
-            self.solver = GaussianProcessTreegp
-        elif solver == "george":
-            self.solver = GaussianProcessHODLRSolver
-        elif solver == "gpytorch":
-            self.solver = GaussianProcessGPyTorch
-
         if method not in ["block", "spanset"]:
             raise ValueError(
                 "Only block and spanset are supported for method. Current value: %s"
@@ -176,7 +141,7 @@ class InterpolateOverDefectGaussianProcess:
         glob_ymin, glob_ymax = bbox.minY, bbox.maxY
 
         condition = False
-        for i in tqdm(range(len(badMaskSpanSet))):
+        for i in range(len(badMaskSpanSet)):
             spanset = badMaskSpanSet[i]
             bbox = spanset.getBBox()
             # Dilate the bbox to make sure we have enough good pixels around the defect
@@ -248,7 +213,7 @@ class InterpolateOverDefectGaussianProcess:
         nx = maskedImage.getDimensions()[0]
         ny = maskedImage.getDimensions()[1]
 
-        for x in tqdm(range(0, nx, self.block_size)):
+        for x in range(0, nx, self.block_size):
             for y in range(0, ny, self.block_size):
                 sub_nx = min(self.block_size, nx - x)
                 sub_ny = min(self.block_size, ny - y)
@@ -261,7 +226,6 @@ class InterpolateOverDefectGaussianProcess:
 
         return maskedImage
 
-    @timer
     def interpolate_over_defects(self):
         """
         Interpolates over defects using the specified method.
@@ -321,7 +285,7 @@ class InterpolateOverDefectGaussianProcess:
             if self.use_binning:
                 good_pixel = self._good_pixel_binning(copy.deepcopy(good_pixel))
 
-            gp = self.solver(
+            gp = GaussianProcessTreegp(
                 std=np.sqrt(kernel_amplitude),
                 correlation_length=self.correlation_length,
                 white_noise=white_noise,
