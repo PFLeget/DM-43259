@@ -1,76 +1,86 @@
 import numpy as np
-from gaussian_processes import (
-    GaussianProcessTreegp,
-)
 from lsst.meas.algorithms import CloughTocher2DInterpolatorUtils as ctUtils
 from lsst.geom import Box2I, Point2I, Extent2I
 from lsst.afw.geom import SpanSet
-from scipy.stats import binned_statistic_2d
 import copy
+import treegp
 
+__all__ = [
+    "GaussianProcessTreegp",
+    "InterpolateOverDefectGaussianProcess",
+    "interpolateOverDefectsGP",
+]
 
-def meanify(
-    params,
-    coords,
-    bin_spacing=10,
-    stat_used="mean",
-    x_min=None,
-    x_max=None,
-    y_min=None,
-    y_max=None,
-):
+# Vanilla Gaussian Process regression using treegp package
+# There is no fancy O(N*log(N)) solver here, just the basic GP regression (Cholesky).
+class GaussianProcessTreegp:
     """
-    Compute the mean of the given parameters over a grid of coordinates.
+    Gaussian Process regression using treegp package.
 
-    Parameters:
-    - params (numpy.ndarray): Array of parameters to be averaged.
-    - coords (numpy.ndarray): Array of coordinates corresponding to the parameters.
-    - bin_spacing (float, optional): Spacing between bins in the units of the coordinates. Default is 10.
-    - stat_used (str, optional): Statistic to be computed. Default is 'mean'.
-    - x_min (float, optional): Minimum x-coordinate value. If not provided, the minimum value from the coordinates array is used.
-    - x_max (float, optional): Maximum x-coordinate value. If not provided, the maximum value from the coordinates array is used.
-    - y_min (float, optional): Minimum y-coordinate value. If not provided, the minimum value from the coordinates array is used.
-    - y_max (float, optional): Maximum y-coordinate value. If not provided, the maximum value from the coordinates array is used.
+    This class implements Gaussian Process regression using the treegp package. It provides methods for fitting the
+    regression model and making predictions.
 
-    Returns:
-    - coords0 (numpy.ndarray): Array of coordinates corresponding to the averaged parameters.
-    - params0 (numpy.ndarray): Array of averaged parameters.
+    Attributes:
+        std (float): The standard deviation parameter for the Gaussian Process kernel.
+        l (float): The correlation length parameter for the Gaussian Process kernel.
+        white_noise (float): The white noise parameter for the Gaussian Process kernel.
+        mean (float): The mean parameter for the Gaussian Process kernel.
 
-    Note: The bin spacing is in the units of the coordinates.
+    Methods:
+        fit(x_good, y_good): Fits the Gaussian Process regression model to the given training data.
+        predict(x_bad): Makes predictions using the fitted Gaussian Process regression model.
+
     """
-    if x_min is None:
-        x_min = np.min(coords[:, 0])
-    if x_max is None:
-        x_max = np.max(coords[:, 0])
-    if y_min is None:
-        y_min = np.min(coords[:, 1])
-    if y_max is None:
-        y_max = np.max(coords[:, 1])
 
-    nbin_x = int((x_max - x_min) / bin_spacing)
-    nbin_y = int((y_max - y_min) / bin_spacing)
-    binning = [np.linspace(x_min, x_max, nbin_x), np.linspace(y_min, y_max, nbin_y)]
-    nbinning = (len(binning[0]) - 1) * (len(binning[1]) - 1)
-    Filter = np.array([True] * nbinning)
+    def __init__(self, std=1.0, correlation_length=1.0, white_noise=0.0, mean=0.0):
+        """
+        Initializes a new instance of the gp_treegp class.
 
-    average, u0, v0, _ = binned_statistic_2d(
-        coords[:, 0], coords[:, 1], params, bins=binning, statistic=stat_used
-    )
+        Args:
+            std (float, optional): The standard deviation parameter for the Gaussian Process kernel. Defaults to 2.
+            correlation_length (float, optional): The correlation length parameter for the Gaussian Process kernel.
+                Defaults to 1.
+            white_noise (float, optional): The white noise parameter for the Gaussian Process kernel. Defaults to 0.
+            mean (float, optional): The mean parameter for the Gaussian Process kernel. Defaults to 0.
 
-    # get center of each bin
-    u0 = u0[:-1] + (u0[1] - u0[0]) / 2.0
-    v0 = v0[:-1] + (v0[1] - v0[0]) / 2.0
-    u0, v0 = np.meshgrid(u0, v0)
+        """
+        self.std = std
+        self.l = correlation_length
+        self.white_noise = white_noise
+        self.mean = mean
 
-    average = average.T
-    average = average.reshape(-1)
-    Filter &= np.isfinite(average).reshape(-1)
+    def fit(self, x_good, y_good):
+        """
+        Fits the Gaussian Process regression model to the given training data.
 
-    coords0 = np.array([u0.reshape(-1), v0.reshape(-1)]).T
-    coords0 = coords0[Filter]
-    params0 = average[Filter]
+        Args:
+            x_good (array-like): The input features of the training data.
+            y_good (array-like): The target values of the training data.
 
-    return coords0, params0
+        """
+        KERNEL = "%.2f**2 * RBF(%f)" % ((self.std, self.l))
+        self.gp = treegp.GPInterpolation(
+            kernel=KERNEL,
+            optimizer="none",
+            normalize=True,
+            white_noise=self.white_noise,
+        )
+        self.gp.initialize(x_good, y_good)
+        self.gp.solve()
+
+    def predict(self, x_bad):
+        """
+        Makes predictions using the fitted Gaussian Process regression model.
+
+        Args:
+            x (array-like): The input features for which to make predictions.
+
+        Returns:
+            array-like: The predicted target values.
+
+        """
+        y_pred = self.gp.predict(x_bad)
+        return y_pred
 
 
 class InterpolateOverDefectGaussianProcess:
@@ -81,10 +91,6 @@ class InterpolateOverDefectGaussianProcess:
         maskedImage (MaskedImage): The masked image containing defects.
         defects (list, optional): List of defect names to interpolate over. Defaults to ["SAT"].
         fwhm (float, optional): FWHM from PSF and used as prior for correlation length. Defaults to 5.
-        block_size (int, optional): Size of the block for block interpolation method. Defaults to 100.
-        solver (str, optional): Solver to use for Gaussian Process interpolation. Options are "treegp", "george", and "gpytorch". Defaults to "treegp".
-        method (str, optional): Interpolation method to use. Options are "block" and "spanset". Defaults to "block".
-        use_binning (bool, optional): Whether to use binning for large areas. Defaults to False.
         bin_spacing (float, optional): Spacing for binning. Defaults to 10.
     """
 
@@ -93,10 +99,8 @@ class InterpolateOverDefectGaussianProcess:
         maskedImage,
         defects=["SAT"],
         fwhm=5,
-        block_size=100,
-        method="block",
-        use_binning=False,
         bin_spacing=10,
+        threshold_subdivide=20000,
     ):
         """
         Initializes the InterpolateOverDefectGaussianProcess class.
@@ -105,29 +109,17 @@ class InterpolateOverDefectGaussianProcess:
             maskedImage (MaskedImage): The masked image containing defects.
             defects (list, optional): List of defect names to interpolate over. Defaults to ["SAT"].
             fwhm (float, optional): FWHM from PSF and used as prior for correlation length. Defaults to 5.
-            block_size (int, optional): Size of the block for block interpolation method. Defaults to 100.
-            solver (str, optional): Solver to use for Gaussian Process interpolation. Options are "treegp", "george", and "gpytorch". Defaults to "treegp".
-            method (str, optional): Interpolation method to use. Options are "block" and "spanset". Defaults to "block".
-            use_binning (bool, optional): Whether to use binning for large areas. Defaults to False.
             bin_spacing (float, optional): Spacing for binning. Defaults to 10.
         """
-        if method not in ["block", "spanset"]:
-            raise ValueError(
-                "Only block and spanset are supported for method. Current value: %s"
-                % (self.method)
-            )
 
-        self.method = method
-        self.block_size = block_size
-
-        self.use_binning = use_binning
         self.bin_spacing = bin_spacing
+        self.threshold_subdivide = threshold_subdivide
 
         self.maskedImage = maskedImage
         self.defects = defects
         self.correlation_length = fwhm
 
-    def _interpolate_over_defects_spanset(self):
+    def interpolate_over_defects(self):
         """
         Interpolates over defects using the spanset method.
         """
@@ -140,7 +132,6 @@ class InterpolateOverDefectGaussianProcess:
         glob_xmin, glob_xmax = bbox.minX, bbox.maxX
         glob_ymin, glob_ymax = bbox.minY, bbox.maxY
 
-        condition = False
         for i in range(len(badMaskSpanSet)):
             spanset = badMaskSpanSet[i]
             bbox = spanset.getBBox()
@@ -152,89 +143,18 @@ class InterpolateOverDefectGaussianProcess:
             xmin, xmax = max([glob_xmin, bbox.minX]), min(glob_xmax, bbox.maxX)
             ymin, ymax = max([glob_ymin, bbox.minY]), min(glob_ymax, bbox.maxY)
             localBox = Box2I(Point2I(xmin, ymin), Extent2I(xmax - xmin, ymax - ymin))
-            problem_size = (xmax - xmin) * (ymax - ymin)
-            if problem_size > 10000 and not self.use_binning:
-                # TO DO: need to implement a better way to interpolate over large areas
-                # TO DO: One suggested idea might be to bin the area and average and interpolate using
-                # TO DO: the average values.
-                print("Problem size is too large to interpolate over. Skipping.")
-                print("Problem size: ", problem_size)
-                print("xmin, xmax, ymin, ymax: ", xmin, xmax, ymin, ymax)
-                print("bbox: ", bbox)
-                print("Use interpolate_over_defects_block instead for this spanset.")
-                try:
-                    sub_masked_image = self.maskedImage[localBox]
-                except:
-                    condition = True
-                    break
-                try:
-                    sub_masked_image = self._interpolate_over_defects_block(
-                        maskedImage=sub_masked_image
-                    )
-                except:
-                    continue
-                self.maskedImage[localBox] = sub_masked_image
-            else:
-                try:
-                    sub_masked_image = self.maskedImage[localBox]
-                except:
-                    condition = True
-                    break
-                try:
-                    sub_masked_image = self.interpolate_sub_masked_image(
-                        sub_masked_image
-                    )
-                except:
-                    continue
-                self.maskedImage[localBox] = sub_masked_image
-        if condition:
-            breakpoint()
+            try:
+                sub_masked_image = self.maskedImage[localBox]
+            except:
+                raise ValueError("Sub-masked image not found.")
+            # try:
+            sub_masked_image = self.interpolate_sub_masked_image(
+                sub_masked_image
+                )
+            # except:
+            #     raise ValueError("Interpolation failed.")
+            self.maskedImage[localBox] = sub_masked_image
 
-    def _interpolate_over_defects_block(self, maskedImage=None):
-        """
-        Interpolates over defects using the block method.
-
-        Args:
-            maskedImage (ndarray, optional): The masked image to interpolate over. If not provided, the method will use the
-                `maskedImage` attribute of the class.
-
-        Returns:
-            ndarray: The interpolated masked image.
-        """
-        if maskedImage is None:
-            maskedImage = self.maskedImage
-            bbox = None
-        else:
-            bbox = maskedImage.getBBox()
-            ox = bbox.beginX
-            oy = bbox.beginY
-            maskedImage.setXY0(0, 0)
-
-        nx = maskedImage.getDimensions()[0]
-        ny = maskedImage.getDimensions()[1]
-
-        for x in range(0, nx, self.block_size):
-            for y in range(0, ny, self.block_size):
-                sub_nx = min(self.block_size, nx - x)
-                sub_ny = min(self.block_size, ny - y)
-                sub_masked_image = maskedImage[x : x + sub_nx, y : y + sub_ny]
-                sub_masked_image = self.interpolate_sub_masked_image(sub_masked_image)
-                maskedImage[x : x + sub_nx, y : y + sub_ny] = sub_masked_image
-
-        if bbox is not None:
-            maskedImage.setXY0(ox, oy)
-
-        return maskedImage
-
-    def interpolate_over_defects(self):
-        """
-        Interpolates over defects using the specified method.
-        """
-
-        if self.method == "block":
-            self.maskedImage = self._interpolate_over_defects_block()
-        elif self.method == "spanset":
-            self._interpolate_over_defects_spanset()
 
     def _good_pixel_binning(self, good_pixel):
         """
@@ -247,13 +167,10 @@ class InterpolateOverDefectGaussianProcess:
         - numpy.ndarray: An array containing the binned data.
 
         """
-        coord, params = meanify(
-            good_pixel[:, 2:].T,
-            good_pixel[:, :2],
-            bin_spacing=self.bin_spacing,
-            stat_used="mean",
-        )
-        return np.array([coord[:, 0], coord[:, 1], params]).T
+        binning = treegp.meanify(bin_spacing=self.bin_spacing, statistics='mean')
+        binning.add_field(good_pixel[:, :2], good_pixel[:, 2:].T,)
+        binning.meanify()
+        return np.array([binning.coords0[:, 0], binning.coords0[:, 1], binning.params0]).T
 
     def interpolate_sub_masked_image(self, sub_masked_image):
         """
@@ -282,8 +199,7 @@ class InterpolateOverDefectGaussianProcess:
                 np.mean(sub_image_array[np.isfinite(sub_image_array)])
             )
             kernel_amplitude = np.std(good_pixel[:, 2:])
-            if self.use_binning:
-                good_pixel = self._good_pixel_binning(copy.deepcopy(good_pixel))
+            good_pixel = self._good_pixel_binning(copy.deepcopy(good_pixel))
 
             gp = GaussianProcessTreegp(
                 std=np.sqrt(kernel_amplitude),
@@ -291,12 +207,36 @@ class InterpolateOverDefectGaussianProcess:
                 white_noise=white_noise,
                 mean=mean,
             )
-            if bad_pixel.size > 20000:
-                print("Too many pixels | TO DO: need to implement something")
             gp.fit(good_pixel[:, :2], np.squeeze(good_pixel[:, 2:]))
-            gp_predict = gp.predict(bad_pixel[:, :2])
-            bad_pixel[:, 2:] = gp_predict.reshape(np.shape(bad_pixel[:, 2:]))
+            if bad_pixel.size < self.threshold_subdivide:
+                gp_predict = gp.predict(bad_pixel[:, :2])
+                bad_pixel[:, 2:] = gp_predict.reshape(np.shape(bad_pixel[:, 2:]))
+            else:
+                print('sub-divide bad pixel array to avoid memory error.')
+                for i in range(0, len(bad_pixel), self.threshold_subdivide):
+                     end = min(i + self.threshold_subdivide, len(bad_pixel))
+                     gp_predict = gp.predict(bad_pixel[i : end, :2])
+                     bad_pixel[i : end, 2:] = gp_predict.reshape(np.shape(bad_pixel[i : end, 2:]))
 
             # update_value
             ctUtils.updateImageFromArray(sub_masked_image.image, bad_pixel)
             return sub_masked_image
+        
+def interpolateOverDefectsGP(image, fwhm, badList, bin_spacing=15, threshold_subdivide=20000):
+    """
+    Interpolates over defects in an image using Gaussian Process interpolation.
+
+    Args:
+        image : The input image.
+        fwhm (float): The full width at half maximum (FWHM) of the PSF used for approximation of correlation lenght.
+        badList (list): A list of defects to interpolate over.
+        bin_spacing (int, optional): The spacing between bins when resampling. Defaults to 15.
+        threshold_subdivide (int, optional): The threshold number of bad pixels to subdivide to avoid memory issue. Defaults to 20000.
+
+    Returns:
+        None
+    """
+    gp = InterpolateOverDefectGaussianProcess(image, defects=badList,
+                                              fwhm=fwhm, bin_spacing=bin_spacing, 
+                                              threshold_subdivide=threshold_subdivide)
+    gp.interpolate_over_defects()
