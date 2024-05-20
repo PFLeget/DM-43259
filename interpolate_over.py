@@ -5,11 +5,111 @@ from lsst.afw.geom import SpanSet
 import copy
 import treegp
 
+import jax
+from jax import jit
+import jax.numpy as jnp
+
+
+@jit
+def jax_pdist_squared(X):
+    return jnp.sum((X[:, None, :] - X[None, :, :]) ** 2, axis=-1)
+
+@jit
+def jax_cdist_squared(XA, XB):
+    return jnp.sum((XA[:, None, :] - XB[None, :, :]) ** 2, axis=-1)
+
+@jit
+def jax_get_alpha(y, K):
+    # factor = (cholesky(K, overwrite_a=True, lower=False), False)
+    # alpha = cho_solve(factor, y, overwrite_b=False)
+    factor = (jax.scipy.linalg.cholesky(K, overwrite_a=True, lower=False), False)
+    alpha = jax.scipy.linalg.cho_solve(factor, y, overwrite_b=False)
+    return alpha.reshape((len(alpha), 1))
+
+@jit
+def jax_get_y_predict(HT, alpha):
+    return jnp.dot(HT, alpha).T[0]
+
+@jit
+def jax_rbf_k(x1, sigma, correlation_length, y_err):
+    """Compute the RBF kernel with JAX.
+
+    :param x1:              The first set of points. (n_samples,)
+    :param sigma:           The amplitude of the kernel.
+    :param correlation_length: The correlation length of the kernel.
+    :param y_err:           The error of the field. (n_samples)
+    :param white_noise:     The white noise of the field.
+    """
+
+    l1 = jax_pdist_squared(x1)
+    K = (sigma**2) * jnp.exp(-0.5 * l1 / (correlation_length**2))
+    y_err = jnp.ones(len(x1[:,0])) * y_err
+    K += jnp.eye(len(y_err)) * (y_err**2)
+    return K
+
+@jit
+def jax_rbf_h(x1, x2, sigma, correlation_length):
+    """Compute the RBF kernel with JAX.
+
+    :param x1:              The first set of points. (n_samples,)
+    :param x2:              The second set of points. (n_samples)
+    :param sigma:           The amplitude of the kernel.
+    :param correlation_length: The correlation length of the kernel.
+    :param y_err:           The error of the field. (n_samples)
+    :param white_noise:     The white noise of the field.
+    """
+    l1 = jax_cdist_squared(x1, x2)
+    K = (sigma**2) * jnp.exp(-0.5 * l1 / (correlation_length**2))
+    return K
+
 __all__ = [
     "GaussianProcessTreegp",
     "InterpolateOverDefectGaussianProcess",
     "interpolateOverDefectsGP",
 ]
+
+class GaussianProcessJax:
+    def __init__(self, std=1.0, correlation_length=1.0, white_noise=0.0, mean=0.0):
+        """
+        TO DO
+        """
+        self.std = std
+        self.l = correlation_length
+        self.white_noise = white_noise
+        self.mean = mean
+        self._alpha = None
+
+    def fit(self, x_good, y_good):
+        """
+        Fits the Gaussian Process regression model to the given training data.
+
+        Args:
+            x_good (array-like): The input features of the training data.
+            y_good (array-like): The target values of the training data.
+
+        """
+        y = y_good - self.mean
+        self._x = x_good
+        K = jax_rbf_k(x_good, self.std, self.l, self.white_noise)
+        self._alpha = jax_get_alpha(y, K)
+
+
+    def predict(self, x_bad):
+        """
+        Makes predictions using the fitted Gaussian Process regression model.
+
+        Args:
+            x (array-like): The input features for which to make predictions.
+
+        Returns:
+            array-like: The predicted target values.
+
+        """
+        HT = jax_rbf_h(x_bad, self._x, self.std, self.l)
+        y_pred = jax_get_y_predict(HT, self._alpha)
+        return y_pred + self.mean
+
+
 
 # Vanilla Gaussian Process regression using treegp package
 # There is no fancy O(N*log(N)) solver here, just the basic GP regression (Cholesky).
@@ -98,6 +198,7 @@ class InterpolateOverDefectGaussianProcess:
         self,
         maskedImage,
         defects=["SAT"],
+        method="treegp",
         fwhm=5,
         bin_spacing=10,
         threshold_subdivide=20000,
@@ -111,6 +212,14 @@ class InterpolateOverDefectGaussianProcess:
             fwhm (float, optional): FWHM from PSF and used as prior for correlation length. Defaults to 5.
             bin_spacing (float, optional): Spacing for binning. Defaults to 10.
         """
+
+        if method not in ["jax", "treegp"]:
+            raise ValueError("Invalid method. Must be 'jax' or 'treegp'.")
+        
+        if method == "jax":
+            self.GaussianProcess = GaussianProcessJax
+        if method == "treegp":
+            self.GaussianProcess = GaussianProcessTreegp
 
         self.bin_spacing = bin_spacing
         self.threshold_subdivide = threshold_subdivide
@@ -201,7 +310,7 @@ class InterpolateOverDefectGaussianProcess:
             kernel_amplitude = np.std(good_pixel[:, 2:])
             good_pixel = self._good_pixel_binning(copy.deepcopy(good_pixel))
 
-            gp = GaussianProcessTreegp(
+            gp = self.GaussianProcess(
                 std=np.sqrt(kernel_amplitude),
                 correlation_length=self.correlation_length,
                 white_noise=white_noise,
@@ -222,7 +331,7 @@ class InterpolateOverDefectGaussianProcess:
             ctUtils.updateImageFromArray(sub_masked_image.image, bad_pixel)
             return sub_masked_image
         
-def interpolateOverDefectsGP(image, fwhm, badList, bin_spacing=15, threshold_subdivide=20000):
+def interpolateOverDefectsGP(image, fwhm, badList, method="treegp", bin_spacing=15, threshold_subdivide=20000):
     """
     Interpolates over defects in an image using Gaussian Process interpolation.
 
@@ -236,7 +345,7 @@ def interpolateOverDefectsGP(image, fwhm, badList, bin_spacing=15, threshold_sub
     Returns:
         None
     """
-    gp = InterpolateOverDefectGaussianProcess(image, defects=badList,
+    gp = InterpolateOverDefectGaussianProcess(image, defects=badList, method=method,
                                               fwhm=fwhm, bin_spacing=bin_spacing, 
                                               threshold_subdivide=threshold_subdivide)
     gp.interpolate_over_defects()
